@@ -85,6 +85,7 @@ private:
   void initVulkan() {
     createInstance();
     setupDebugMessenger();
+    pickPhysicalDevice();
   }
 
   void mainLoop() {
@@ -283,6 +284,32 @@ private:
     }
   }
 
+  // look for and select a graphics card in the systme that supports the features we need
+  // we can select any number of graphics cards and use them simultaneously
+  void pickPhysicalDevice() {
+    uint32_t deviceCount = 0;
+    vkEnumeratePhysicalDevices(instance, &deviceCount, nullptr);
+    if (deviceCount == 0) {
+      throw std::runtime_error("failed to find GPUs with Vulkan support!");
+    }
+
+    std::vector<VkPhysicalDevice> devices(deviceCount);
+    vkEnumeratePhysicalDevices(instance, &deviceCount, devices.data());
+
+    for (const auto &device : devices) {
+      VkPhysicalDeviceProperties deviceProperties;
+      vkGetPhysicalDeviceProperties(device, &deviceProperties);
+      VkPhysicalDeviceFeatures deviceFeatures;
+      vkGetPhysicalDeviceFeatures(device, &deviceFeatures);
+
+      if (deviceProperties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU &&
+          deviceFeatures.geometryShader) {
+        physicalDevice = device;
+        break;
+      }
+    }
+  }
+
 private:
   GLFWwindow* window;
   VkInstance instance;
@@ -290,6 +317,9 @@ private:
   // even the debug callback in vulkan ins managed with a handle that is created/destroyed.
   // you can have as many of these as you want.
   VkDebugUtilsMessengerEXT debugMessenger;
+
+  // graphics card
+  VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
 };
 
 int main() {
