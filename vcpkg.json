@@ -1,0 +1,10 @@
+{
+  "name" : "vulkan-tut",
+  "version-string" : "1.0.0",
+  "builtin-baseline" : "f5c5b8ddbb88dec7eed4a5ac54c36d1c64d2d29d",
+  "dependencies" : [ {
+    "name" : "fmt",
+    "version>=" : "10.1.1",
+    "$comment" : "    find_package(fmt CONFIG REQUIRED)\n\n    target_link_libraries(main PRIVATE fmt::fmt)\n"
+  } ]
+}
