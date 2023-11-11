@@ -7,6 +7,7 @@
 #include <stdexcept>
 #include <cstdlib>
 #include <optional>
+#include <set>
 
 #include <fmt/core.h>
 
@@ -19,30 +20,16 @@
 struct QueueFamilyIndices {
   // any value of uint32_t could in theory be a valid queue family index including 0
   std::optional<uint32_t> graphicsFamily;
+
+  // TODO(vulkan): difference between graphics and present family?
+  //               graphics == compute, present == purely about presenting on the Surface object?
+  std::optional<uint32_t> presentFamily;
+
+  bool isComplete() {
+    return graphicsFamily.has_value() && presentFamily.has_value();
+  }
 };
 
-// need to check which queue families are supported by the device
-// and which of these families supports the commands that we want to use
-QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device) {
-  QueueFamilyIndices indices;
-
-  uint32_t queueFamilyCount = 0;
-  vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, nullptr);
-  std::vector<VkQueueFamilyProperties> queueFamilies(queueFamilyCount);
-  vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, queueFamilies.data());
-
-  int i = 0;
-  for (const auto& queueFamily : queueFamilies) {
-    if (queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT) {
-      indices.graphicsFamily = i;
-      break;
-    }
-
-    ++i;
-  }
-
-  return indices;
-}
 
 
 // The
@@ -121,7 +108,9 @@ private:
   void initVulkan() {
     createInstance();
     setupDebugMessenger();
+    createSurface();
     pickPhysicalDevice();
+    createLogicalDevice();
   }
 
   void mainLoop() {
@@ -131,10 +120,14 @@ private:
   }
 
   void cleanup() {
+    // queues are automatically cleaned up when their logical device is destroyed
+    vkDestroyDevice(device, nullptr);
+
     if (enableValidationLayers) {
       DestroyDebugUtilsMessengerEXT(instance, debugMessenger, nullptr);
     }
 
+    vkDestroySurfaceKHR(instance, surface, nullptr);
     vkDestroyInstance(instance, nullptr);
     glfwDestroyWindow(window);
     glfwTerminate();
@@ -320,6 +313,39 @@ private:
     }
   }
 
+  // need to check which queue families are supported by the device
+  // and which of these families supports the commands that we want to use
+  QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device) {
+    QueueFamilyIndices indices;
+
+    uint32_t queueFamilyCount = 0;
+    vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, nullptr);
+    std::vector<VkQueueFamilyProperties> queueFamilies(queueFamilyCount);
+    vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, queueFamilies.data());
+
+
+    int i = 0;
+    for (const auto &queueFamily: queueFamilies) {
+      if (queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT) {
+        indices.graphicsFamily = i;
+      }
+
+      VkBool32 presentSupport = false;
+      vkGetPhysicalDeviceSurfaceSupportKHR(device, i, surface, &presentSupport);
+      if (presentSupport) {
+        indices.presentFamily = i;
+      }
+
+      if (indices.isComplete()) {
+        break;
+      }
+
+      ++i;
+    }
+
+    return indices;
+  }
+
   // look for and select a graphics card in the systme that supports the features we need
   // we can select any number of graphics cards and use them simultaneously
   void pickPhysicalDevice() {
@@ -342,15 +368,79 @@ private:
 
       if (deviceProperties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU &&
           deviceFeatures.geometryShader &&
-          indices.graphicsFamily.has_value())
+          indices.isComplete())
       {
         physicalDevice = device;
         break;
       }
     }
+
+    if (physicalDevice == VK_NULL_HANDLE) {
+      throw std::runtime_error("failed to find a suitable GPU!");
+    }
   }
 
-private:
+  void createLogicalDevice() {
+    QueueFamilyIndices indices = findQueueFamilies(physicalDevice);
+
+    std::vector<VkDeviceQueueCreateInfo> queueCreateInfos;
+    std::set<uint32_t> uniqueQueueFamilies = {
+        indices.graphicsFamily.value(),
+        indices.presentFamily.value()
+    };
+    float queuePriority = 1.0f;
+
+    for (uint32_t queueFamily : uniqueQueueFamilies) {
+      VkDeviceQueueCreateInfo queueCreateInfo = {};
+      queueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+      queueCreateInfo.queueFamilyIndex = queueFamily;
+      queueCreateInfo.queueCount = 1;
+      queueCreateInfo.pQueuePriorities = &queuePriority;
+      queueCreateInfos.push_back(queueCreateInfo);
+    }
+
+    VkDeviceCreateInfo createInfo = {};
+    createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+
+    // TODO(cpp): difference between "x;", "x{};", "x = {};" ?
+    VkPhysicalDeviceFeatures deviceFeatures{};
+    createInfo.pEnabledFeatures = &deviceFeatures;
+
+    createInfo.queueCreateInfoCount = static_cast<uint32_t>(queueCreateInfos.size());
+    createInfo.pQueueCreateInfos = queueCreateInfos.data();
+
+    // similar to VkInstanceCreateInfo, but these are now device specific
+    // e.g. VKK_KHR_swapchain is device specific extension that allows you to present rendered images
+    // from that device to windows
+
+    // vulkan _no longer_ makes a distinction between instance and device specific validation layers
+    // ==> enabledLayerCount and ppEnabledLayerNames are ignored
+    //    createInfo.enabledLayerCount
+    //    createInfo.ppEnabledLayerNames
+
+    VkResult res = vkCreateDevice(physicalDevice, &createInfo, nullptr, &device);
+    if (res != VK_SUCCESS) {
+      throw std::runtime_error(fmt::format(
+          "[err={}] failed to create logical device!",
+          static_cast<int>(res)
+      ));
+    }
+
+    vkGetDeviceQueue(device, indices.graphicsFamily.value(), 0, &graphicsQueue);
+    vkGetDeviceQueue(device, indices.presentFamily.value(), 0, &presentQueue);
+  }
+
+  void createSurface() {
+    VkResult res = glfwCreateWindowSurface(instance, window, nullptr, &surface);
+    if (res != VK_SUCCESS) {
+      throw std::runtime_error(fmt::format(
+          "[err={}] failed to create window surface!",
+          static_cast<int>(res)
+      ));
+    }
+  }
+
+private: // members
   GLFWwindow *window;
   VkInstance instance;
 
@@ -360,6 +450,24 @@ private:
 
   // graphics card
   VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
+
+  // logical device
+  // interfaces with the physical device
+  VkDevice device;
+
+  VkQueue graphicsQueue;
+
+  // to establish connection between vulkan and the window system to present results to the screen we need to use
+  // the WSI (window system integration) extensions
+  // VK_KHR_surface is one
+  // VkSurfaceKHR is an object that represents an abstract type of surface to prseent rendered images to
+  // the surface will be backed by the window that we've opened with GLFW
+  // instance level extension
+  // returned by the glfwGetRequiredInstanceExtensions
+  // the surface needs to be created right after the instance creation because it can influence the physical device selection
+  VkSurfaceKHR surface;
+
+  VkQueue presentQueue;
 };
 
 int main() {
