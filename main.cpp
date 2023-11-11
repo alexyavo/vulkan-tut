@@ -134,6 +134,7 @@ private:
     pickPhysicalDevice();
     createLogicalDevice();
     createSwapChain();
+    createImageViews();
   }
 
   void mainLoop() {
@@ -143,6 +144,10 @@ private:
   }
 
   void cleanup() {
+    for (auto imageView: swapChainImageViews) {
+      vkDestroyImageView(device, imageView, nullptr);
+    }
+
     vkDestroySwapchainKHR(device, swapChain, nullptr);
 
     // queues are automatically cleaned up when their logical device is destroyed
@@ -671,6 +676,45 @@ private:
     swapChainExtent = extent;
   }
 
+  void createImageViews() {
+    swapChainImageViews.resize(swapChainImages.size());
+    for (size_t i = 0; i < swapChainImages.size(); ++i) {
+      VkImageViewCreateInfo createInfo = {};
+      createInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+      createInfo.image = swapChainImages[i];
+
+      // viewType and format specify how the image data should be interpreted
+      // viewType allows to treat images as 1D textures, 2D texture, 3D textures and cube maps
+      createInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+      createInfo.format = swapChainImageFormat;
+
+      // you can map all of the channels to the red channel for a monochrome texture
+      // you can also map constant value of 0 or 1 to a channel
+      // here we're sticking to the default mapping
+      createInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
+      createInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
+      createInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
+      createInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
+
+      // describes what the image purpose is and which part of the image should be accessed
+      // our image is used as color target
+      // no mpmapping levels or multiple layers
+      createInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+      createInfo.subresourceRange.baseMipLevel = 0;
+      createInfo.subresourceRange.levelCount = 1;
+      createInfo.subresourceRange.baseArrayLayer = 0;
+      createInfo.subresourceRange.layerCount = 1;
+
+      VkResult res = vkCreateImageView(device, &createInfo, nullptr, &swapChainImageViews[i]);
+      if (res != VK_SUCCESS) {
+        throw std::runtime_error(fmt::format(
+            "[err={}] failed to create image views!",
+            static_cast<int>(res)
+        ));
+      }
+    }
+  }
+
 private: // members
   GLFWwindow *window;
   VkInstance instance;
@@ -703,6 +747,10 @@ private: // members
   std::vector<VkImage> swapChainImages;
   VkFormat swapChainImageFormat;
   VkExtent2D swapChainExtent;
+
+  // image view is sufficient to start using an image as a texture, but it's not quite ready
+  // to be used as a render target
+  std::vector<VkImageView> swapChainImageViews;
 };
 
 int main() {
