@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <optional>
 #include <set>
+#include <limits>
 
 #include <fmt/core.h>
 
@@ -132,6 +133,7 @@ private:
     createSurface();
     pickPhysicalDevice();
     createLogicalDevice();
+    createSwapChain();
   }
 
   void mainLoop() {
@@ -141,6 +143,8 @@ private:
   }
 
   void cleanup() {
+    vkDestroySwapchainKHR(device, swapChain, nullptr);
+
     // queues are automatically cleaned up when their logical device is destroyed
     vkDestroyDevice(device, nullptr);
 
@@ -394,8 +398,7 @@ private:
           deviceFeatures.geometryShader &&
           indices.isComplete() &&
           checkDeviceExtensionSupport(device) &&
-          swapChainAdequate
-          )
+          swapChainAdequate)
       {
         physicalDevice = device;
         break;
@@ -510,6 +513,164 @@ private:
     return details;
   }
 
+  VkSurfaceFormatKHR chooseSwapSurfaceFormat(const std::vector<VkSurfaceFormatKHR>& availableFormats) {
+    for (const auto& availableFormat : availableFormats) {
+      // format specifies the color channels and types
+      // VK_FORMAT_B8G8R8A8_SRGB means that we store the B, G, R and alpha channels in that order with
+      // an 8 bit unsigned integer for a total of 32 bits per pixel
+
+      // the colorSpace member indicates if the SRGB color space is supported or not using the
+      // VK_COLOR_SPACE_SRGB_NONLINEAR_KHR flag
+
+      // for color space we want to use SRGB color format, because it results in more accurate perceived colors
+      // it is also the standard color space for images (like textures)
+      // & the most common SRGB format is VK_FORMAT_B8G8R8A8_SRGB
+      if (availableFormat.format == VK_FORMAT_B8G8R8A8_SRGB &&
+          availableFormat.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
+        return availableFormat;
+      }
+    }
+
+    return availableFormats[0];
+  }
+
+  // TODO(vulkan) meaning of KHR suffix?
+  // ANSWER: vulkan has a bunch of extensions that add functionality beyond the core specification.
+  // these extensions are typically denoted with dfifferent suffixes.
+  // KHR extensions are ratified by the Khronos Group, often cross-vendor and widely supported,
+  // forming a part of the standard but not included in the core Vulkan specification.
+  // other examples of extension suffixes: EXT, NV, AMD, INTEL
+
+
+  VkPresentModeKHR chooseSwapPresentMode(const std::vector<VkPresentModeKHR> & availablePresentModes) {
+    for (const auto & presentMode: availablePresentModes) {
+      // helps avoid tearing (which happens if we choose VK_PRESENT_MODE_IMMEDIATE_KHR)
+      // but avoids the latency issues of VK_PRESENT_MODE_FIFO_KHR
+      // on mobile devices, VK_PRESENT_MODE_FIFO_KHR is better because it consumes less power
+      if (presentMode == VK_PRESENT_MODE_MAILBOX_KHR) {
+        return presentMode;
+      }
+    }
+
+    // the only mode that is guaranteed to be available
+    return VK_PRESENT_MODE_FIFO_KHR;
+  }
+
+  // swap extent == resolution of the swap chain images and it's almost always exactly equal
+  // to the resolution of the window that we're drawing to in pixels
+  // range of possible resolutions is defined in the VkSurfaceCapabilitiesKHR struct
+  //
+  // also: two measuring sizes: pixels and screen coordinates.
+  // with high DPI displays, screen coordinates don't correspond to pixels
+  VkExtent2D chooseSwapExtent(const VkSurfaceCapabilitiesKHR & capabilities) {
+    // if the width isn't the maximum value of uint32_t it means the window manager (GLFW) does not
+    // allow us to differ from the window size, and so we just use that.
+    if (capabilities.currentExtent.width != std::numeric_limits<uint32_t>::max()) {
+      return capabilities.currentExtent;
+    }
+
+    int w, h;
+
+    // query the resolution of the window in pixel
+    glfwGetFramebufferSize(window, &w, &h);
+    VkExtent2D actualExtent = {
+        static_cast<uint32_t>(w),
+        static_cast<uint32_t>(h),
+    };
+
+    actualExtent.width = std::clamp(actualExtent.width, capabilities.minImageExtent.width, capabilities.maxImageExtent.width);
+    actualExtent.height = std::clamp(actualExtent.height, capabilities.minImageExtent.height, capabilities.maxImageExtent.height);
+
+    return actualExtent;
+  }
+
+  void createSwapChain() {
+    SwapChainSupportDetails details = querySwapChainSupport(physicalDevice);
+
+    VkSurfaceFormatKHR surfaceFormat = chooseSwapSurfaceFormat(details.formats);
+    VkPresentModeKHR presentMode = chooseSwapPresentMode(details.presentModes);
+    VkExtent2D extent = chooseSwapExtent(details.capabilities);
+
+    // decide how many images we would like to have in the swap chain
+    // if we stick to the minimum we may sometimes have to wait on the driver to complete
+    // internal operation before we can acquire another image to render to
+    uint32_t imageCount = details.capabilities.minImageCount + 1;
+    if (details.capabilities.maxImageCount > 0 && imageCount > details.capabilities.maxImageCount) {
+      imageCount = details.capabilities.maxImageCount;
+    }
+
+    VkSwapchainCreateInfoKHR createInfo = {};
+    createInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
+    createInfo.surface = surface;
+    createInfo.minImageCount = imageCount;
+    createInfo.imageFormat = surfaceFormat.format;
+    createInfo.imageColorSpace = surfaceFormat.colorSpace;
+    createInfo.imageExtent = extent;
+
+    // specifies amount of layers each image consists of. this is always 1 unless you are developing
+    // a stereoscopic 3D application
+    createInfo.imageArrayLayers = 1;
+
+    // specifies what kind of operations we'll us the images in the swap chain for
+    // we'll be rendering directly oto them, which means that they're used as color attachment
+    //
+    // you may render images to a sepaarate image first to perform operations like post-processing
+    // in that case you may want to use a value like VK_IMAGE_USAGE_TRANSFER_DST_BIT instead
+    createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+
+    QueueFamilyIndices indices = findQueueFamilies(physicalDevice);
+    uint32_t queueFamilyIndices[] = {
+        indices.graphicsFamily.value(),
+        indices.presentFamily.value()
+    };
+
+    if (indices.graphicsFamily != indices.presentFamily) {
+      // avoid having to do the ownership thing to transfer images from one queue to another
+      createInfo.imageSharingMode = VK_SHARING_MODE_CONCURRENT;
+      createInfo.queueFamilyIndexCount = 2;
+      createInfo.pQueueFamilyIndices = queueFamilyIndices;
+    } else {
+      // best performance
+      createInfo.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
+      createInfo.queueFamilyIndexCount = 0;
+      createInfo.pQueueFamilyIndices = nullptr;
+    }
+
+    // apply certain transform to images in the swap chain (see supportedTransforms in capabilities)
+    // e.g. 90-degree rotation or horizontal flip
+    // here we specify we don't want any transformation
+    createInfo.preTransform = details.capabilities.currentTransform;
+
+    // used for blending with other windows in the window system. here we want to ignore this ability
+    createInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+
+    createInfo.presentMode = presentMode;
+
+    // if VK_TRUE, we don't care about the color of p[ixels that are obscured, for example because another window
+    // is in front of them
+    // clipping enabled == better performance
+    createInfo.clipped = VK_TRUE;
+
+    // this might be used when a window resizes for example and we need to create a new swap chain while
+    // still keeping the old one alive until we can move on to the new one
+    createInfo.oldSwapchain = VK_NULL_HANDLE;
+
+    VkResult res = vkCreateSwapchainKHR(device, &createInfo, nullptr, &swapChain);
+    if (res != VK_SUCCESS) {
+      throw std::runtime_error(fmt::format(
+          "[err={}] failed to create swap chain!",
+          static_cast<int>(res)
+      ));
+    }
+
+    vkGetSwapchainImagesKHR(device, swapChain, &imageCount, nullptr);
+    swapChainImages.resize(imageCount);
+    vkGetSwapchainImagesKHR(device, swapChain, &imageCount, swapChainImages.data());
+
+    swapChainImageFormat = surfaceFormat.format;
+    swapChainExtent = extent;
+  }
+
 private: // members
   GLFWwindow *window;
   VkInstance instance;
@@ -538,6 +699,10 @@ private: // members
   VkSurfaceKHR surface;
 
   VkQueue presentQueue;
+  VkSwapchainKHR swapChain;
+  std::vector<VkImage> swapChainImages;
+  VkFormat swapChainImageFormat;
+  VkExtent2D swapChainExtent;
 };
 
 int main() {
