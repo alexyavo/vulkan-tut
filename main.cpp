@@ -1,12 +1,48 @@
 #define GLFW_INCLUDE_VULKAN
+
 #include <GLFW/glfw3.h>
 
 #include <iostream>
 #include <vector>
 #include <stdexcept>
 #include <cstdlib>
+#include <optional>
 
 #include <fmt/core.h>
+
+
+// in vulkan anything from drawing to uploading textures, requires COMMANDS to be submitted to a QUEUE
+// there are different types of QUEUEs that originate from different QUEUE FAMILIES
+// each family allows only a subset of commands
+// e.g. a family that allows processing of compute commands only
+//      or one that allows memory transfer related commands
+struct QueueFamilyIndices {
+  // any value of uint32_t could in theory be a valid queue family index including 0
+  std::optional<uint32_t> graphicsFamily;
+};
+
+// need to check which queue families are supported by the device
+// and which of these families supports the commands that we want to use
+QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device) {
+  QueueFamilyIndices indices;
+
+  uint32_t queueFamilyCount = 0;
+  vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, nullptr);
+  std::vector<VkQueueFamilyProperties> queueFamilies(queueFamilyCount);
+  vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, queueFamilies.data());
+
+  int i = 0;
+  for (const auto& queueFamily : queueFamilies) {
+    if (queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT) {
+      indices.graphicsFamily = i;
+      break;
+    }
+
+    ++i;
+  }
+
+  return indices;
+}
 
 
 // The
@@ -16,9 +52,9 @@
 // ==> we have to look up its address ourselves using vkGetInstanceProcAddr
 VkResult CreateDebugUtilsMessengerEXT(
     VkInstance instance,
-    const VkDebugUtilsMessengerCreateInfoEXT* pCreateInfo,
-    const VkAllocationCallbacks* pAllocator,
-    VkDebugUtilsMessengerEXT* pDebugMessenger
+    const VkDebugUtilsMessengerCreateInfoEXT *pCreateInfo,
+    const VkAllocationCallbacks *pAllocator,
+    VkDebugUtilsMessengerEXT *pDebugMessenger
 ) {
   auto func = (PFN_vkCreateDebugUtilsMessengerEXT) vkGetInstanceProcAddr(
       instance,
@@ -53,8 +89,8 @@ public:
   const uint32_t WIDTH = 800;
   const uint32_t HEIGHT = 600;
 
-  const std::vector<const char*> validationLayers = {
-    "VK_LAYER_KHRONOS_validation"
+  const std::vector<const char *> validationLayers = {
+      "VK_LAYER_KHRONOS_validation"
   };
 
 #ifdef NDEBUG
@@ -137,7 +173,7 @@ private:
       createInfo.ppEnabledLayerNames = validationLayers.data();
 
       populateDebugMessengerCreateInfo(debugCreateInfo);
-      createInfo.pNext = (VkDebugUtilsMessengerCreateInfoEXT*) &debugCreateInfo;
+      createInfo.pNext = (VkDebugUtilsMessengerCreateInfoEXT *) &debugCreateInfo;
     } else {
       createInfo.enabledLayerCount = 0;
       createInfo.pNext = nullptr;
@@ -150,7 +186,7 @@ private:
     vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, availableVkExtensions.data());
 
     std::cout << "available extensions:\n";
-    for (const auto &extension : availableVkExtensions) {
+    for (const auto &extension: availableVkExtensions) {
       std::cout << "\t" << extension.extensionName << "\n";
     }
 
@@ -160,7 +196,7 @@ private:
     glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
 
     // the extensions specified by GLFW are always required
-    std::vector<const char*> enabledExtensionNames(glfwExtensions, glfwExtensions + glfwExtensionCount);
+    std::vector<const char *> enabledExtensionNames(glfwExtensions, glfwExtensions + glfwExtensionCount);
 
     // the debug messenger extension is conditionally added
     if (enableValidationLayers) {
@@ -168,11 +204,11 @@ private:
     }
 
     uint32_t supportedExtensionCount = 0;
-    std::vector<const char*> unsupportedExtensions;
+    std::vector<const char *> unsupportedExtensions;
     std::cout << "required availableVkExtensions:\n";
-    for (auto & enabledExtension : enabledExtensionNames) {
+    for (auto &enabledExtension: enabledExtensionNames) {
       std::cout << "\t" << enabledExtension << "\n";
-      for (const auto &extension : availableVkExtensions) {
+      for (const auto &extension: availableVkExtensions) {
         if (strcmp(enabledExtension, extension.extensionName) == 0) {
           ++supportedExtensionCount;
         } else {
@@ -183,7 +219,7 @@ private:
 
     if (supportedExtensionCount != enabledExtensionNames.size()) {
       std::cout << "missing support for following required availableVkExtensions:\n";
-      for (const auto &extension : unsupportedExtensions) {
+      for (const auto &extension: unsupportedExtensions) {
         std::cout << "\t" << extension << "\n";
       }
 
@@ -214,11 +250,11 @@ private:
     std::vector<VkLayerProperties> availableLayers(layerCount);
     vkEnumerateInstanceLayerProperties(&layerCount, availableLayers.data());
 
-    for (const char* layerName: validationLayers) {
+    for (const char *layerName: validationLayers) {
       std::cout << fmt::format("checking support for validation layer: {}\n", layerName);
 
       bool layerFound = false;
-      for (const auto& layerProperties : availableLayers) {
+      for (const auto &layerProperties: availableLayers) {
         if (strcmp(layerName, layerProperties.layerName) == 0) {
           layerFound = true;
           break;
@@ -237,8 +273,8 @@ private:
   static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
       VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
       VkDebugUtilsMessageTypeFlagsEXT messageType,
-      const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData,
-      void* pUserData) {
+      const VkDebugUtilsMessengerCallbackDataEXT *pCallbackData,
+      void *pUserData) {
     std::cerr << fmt::format("[validation layer callback] {}\n", pCallbackData->pMessage);
     return VK_FALSE;
   }
@@ -296,14 +332,18 @@ private:
     std::vector<VkPhysicalDevice> devices(deviceCount);
     vkEnumeratePhysicalDevices(instance, &deviceCount, devices.data());
 
-    for (const auto &device : devices) {
+    for (const auto &device: devices) {
       VkPhysicalDeviceProperties deviceProperties;
       vkGetPhysicalDeviceProperties(device, &deviceProperties);
       VkPhysicalDeviceFeatures deviceFeatures;
       vkGetPhysicalDeviceFeatures(device, &deviceFeatures);
 
+      QueueFamilyIndices indices = findQueueFamilies(device);
+
       if (deviceProperties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU &&
-          deviceFeatures.geometryShader) {
+          deviceFeatures.geometryShader &&
+          indices.graphicsFamily.has_value())
+      {
         physicalDevice = device;
         break;
       }
@@ -311,7 +351,7 @@ private:
   }
 
 private:
-  GLFWwindow* window;
+  GLFWwindow *window;
   VkInstance instance;
 
   // even the debug callback in vulkan ins managed with a handle that is created/destroyed.
