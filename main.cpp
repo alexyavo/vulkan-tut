@@ -147,11 +147,13 @@ private:
   void initWindow() {
     glfwInit();
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);  // don't create OpenGL context
-    glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);  // disable window resizing
+    glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);  // disable window resizing
 
     // last parameter relevant only for OpenGL
     // monitor param controls which monitor the window will be created on
     window = glfwCreateWindow((int) WIDTH, (int) HEIGHT, "Vulkan", nullptr, nullptr);
+    glfwSetWindowUserPointer(window, this);
+    glfwSetFramebufferSizeCallback(window, framebufferResizeCallback);
   }
 
   void initVulkan() {
@@ -185,6 +187,12 @@ private:
   }
 
   void cleanup() {
+    cleanupSwapchain();
+
+    vkDestroyPipeline(device, graphicsPipeline, nullptr);
+    vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
+    vkDestroyRenderPass(device, renderPass, nullptr);
+
     for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) {
       vkDestroySemaphore(device, imageAvailableSemaphores[i], nullptr);
       vkDestroySemaphore(device, renderFinishedSemaphores[i], nullptr);
@@ -192,20 +200,6 @@ private:
     }
 
     vkDestroyCommandPool(device, commandPool, nullptr);
-
-    for (auto framebuffer : swapChainFramebuffers) {
-      vkDestroyFramebuffer(device, framebuffer, nullptr);
-    }
-
-    vkDestroyPipeline(device, graphicsPipeline, nullptr);
-    vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
-    vkDestroyRenderPass(device, renderPass, nullptr);
-
-    for (auto imageView: swapChainImageViews) {
-      vkDestroyImageView(device, imageView, nullptr);
-    }
-
-    vkDestroySwapchainKHR(device, swapChain, nullptr);
 
     // queues are automatically cleaned up when their logical device is destroyed
     vkDestroyDevice(device, nullptr);
@@ -216,6 +210,7 @@ private:
 
     vkDestroySurfaceKHR(instance, surface, nullptr);
     vkDestroyInstance(instance, nullptr);
+
     glfwDestroyWindow(window);
     glfwTerminate();
   }
@@ -350,6 +345,11 @@ private:
     return true;
   }
 
+  static void framebufferResizeCallback(GLFWwindow * window, int width, int height) {
+    auto app = reinterpret_cast<HelloTriangleApplication *>(glfwGetWindowUserPointer(window));
+    app->framebufferResized = true;
+  }
+
   static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
       VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
       VkDebugUtilsMessageTypeFlagsEXT messageType,
@@ -386,7 +386,9 @@ private:
   }
 
   void setupDebugMessenger() {
-    if (!enableValidationLayers) return;
+    if (!enableValidationLayers) {
+      return;
+    }
 
     VkDebugUtilsMessengerCreateInfoEXT createInfo = {};
     populateDebugMessengerCreateInfo(createInfo);
@@ -1305,13 +1307,16 @@ finalColor = finalColor & colorWriteMask;
     // we want to wait until the previous frame has finished, so that the command buffer and
     // semaphores are available to use
     vkWaitForFences(device, 1, &inFlightFences[currentFrame], VK_TRUE, UINT64_MAX);
-    vkResetFences(device, 1, &inFlightFences[currentFrame]);
+
+    // ****
+    // this block of code, until the call to vkResetFences, used to be after it
+    // this could cause a deadlock, see https://vulkan-tutorial.com/en/Drawing_a_triangle/Swap_chain_recreation
 
     // acquire an image from the swap chain
     // swap chain is an extension feature
     // imageIndex refers to position in swapChainImages
     uint32_t imageIndex;
-    vkAcquireNextImageKHR(
+    VkResult res = vkAcquireNextImageKHR(
         device,
         swapChain,
         UINT64_MAX,
@@ -1319,6 +1324,21 @@ finalColor = finalColor & colorWriteMask;
         VK_NULL_HANDLE,
         &imageIndex
     );
+
+    // VK_ERROR_OUT_OF_DATE_KHR is triggered on window resize, but it is not guranteed to happen
+
+    // both VK_SUCCESS and VK_SUBOPTIMAL_KHR are considered "success" return codes
+    if (res == VK_ERROR_OUT_OF_DATE_KHR) {
+      recreateSwapchain();
+      return;
+    } else if (res != VK_SUCCESS && res != VK_SUBOPTIMAL_KHR) {
+      throw std::runtime_error(fmt::format(
+          "[err={}] failed to acquire swap chain image!",
+          static_cast<int>(res)
+      ));
+    }
+
+    vkResetFences(device, 1, &inFlightFences[currentFrame]);
 
     // now record the command buffer
     vkResetCommandBuffer(commandBuffers[currentFrame], 0);
@@ -1357,9 +1377,58 @@ finalColor = finalColor & colorWriteMask;
     presentInfo.pSwapchains = swapChains;
     presentInfo.pImageIndices = &imageIndex;
 
-    vkQueuePresentKHR(presentQueue, &presentInfo);
+    res = vkQueuePresentKHR(presentQueue, &presentInfo);
+    if (res == VK_ERROR_OUT_OF_DATE_KHR || res == VK_SUBOPTIMAL_KHR || framebufferResized) {
+      framebufferResized = false;
+      recreateSwapchain();
+    } else if (res != VK_SUCCESS) {
+      throw std::runtime_error(fmt::format(
+          "[err={}] failed to present swap chain image!",
+          static_cast<int>(res)
+      ));
+    }
 
     currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
+  }
+
+  void recreateSwapchain() {
+
+    int width = 0, height = 0;
+    glfwGetFramebufferSize(window, &width, &height);
+    while (width == 0 || height == 0) {
+      glfwGetFramebufferSize(window, &width, &height);
+      glfwWaitEvents();
+    }
+
+    std::cout << fmt::format("recreating swap chain w={}, h={}\n", width, height);
+    vkDeviceWaitIdle(device);
+
+    cleanupSwapchain();
+
+    createSwapChain();
+
+    // image views based directly on the swap chain imagesjA
+    createImageViews();
+
+    // depend directly on the swap chain images
+    createFramebuffers();
+
+    // we don't recreate renderpass
+    // it is possible for the swap chain image format to change during an applications lifetime
+    // for example when moving a window from a standard range to a high dynamic range monitor
+    // this would require the application to recreate the renderpass
+  }
+
+  void cleanupSwapchain() {
+    for (auto framebuffer : swapChainFramebuffers) {
+      vkDestroyFramebuffer(device, framebuffer, nullptr);
+    }
+
+    for (auto imageView: swapChainImageViews) {
+      vkDestroyImageView(device, imageView, nullptr);
+    }
+
+    vkDestroySwapchainKHR(device, swapChain, nullptr);
   }
 
 private: // members
@@ -1413,6 +1482,7 @@ private: // members
   std::vector<VkFence> inFlightFences;
 
   uint32_t currentFrame = 0;
+  bool framebufferResized = false;
 };
 
 int main() {
