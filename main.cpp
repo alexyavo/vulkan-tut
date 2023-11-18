@@ -149,17 +149,41 @@ void DestroyDebugUtilsMessengerEXT(
 
 class HelloTriangleApplication {
 public:
-  const std::vector<Vertex> vertices = {
+
+  const std::vector<Vertex> color_triangle = {
       {{0.0f, -0.5f}, {1.0f, 0.0f, 0.0f}},
       {{0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}},
       {{-0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}}
   };
 
-//  const std::vector<Vertex> vertices = {
-//      {{0.0f, -0.5f}, {1.0f, 1.0f, 1.0f}},
-//      {{0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}},
-//      {{-0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}}
-//  };
+  const std::vector<Vertex> bluewhite_triangle = {
+      {{0.0f, -0.5f}, {1.0f, 1.0f, 1.0f}},
+      {{0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}},
+      {{-0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}}
+  };
+
+  const std::vector<Vertex> rectangle = {
+      {{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}},
+      {{0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}},
+      {{0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}},
+      {{-0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}}
+  };
+
+  const std::vector<Vertex> vertices = rectangle;
+
+  // 0 = topleft, 1 = topright, 2 = bottomright, 3 = bottomleft
+  // topleft, topright, bottomright,
+  // bottomright, bottomleft, topleft
+  //
+  // can use uint32_t or uint16_t
+  // since we're using less than 65,535 unique vertices we stick to uint16_t
+  //
+  // reusing vertcies with index buffers allow to save memory which becomes important
+  // when you're loading complex 3D models.
+  //
+  // in the case of the rectangle, you have two triangles, where you can see that two
+  // vertices are duplicated
+  const std::vector<uint16_t> indices = { 0, 1, 2, 2, 3, 0 };
 
   const uint32_t WIDTH = 800;
   const uint32_t HEIGHT = 600;
@@ -219,6 +243,7 @@ private:
     createFramebuffers();
     createCommandPool();
     createVertexBuffer();
+    createIndexBuffer();
     createCommandBuffers();
     createSyncObjects();
   }
@@ -244,6 +269,9 @@ private:
     // not depend on the swap chain
     vkDestroyBuffer(device, vertexBuffer, nullptr);
     vkFreeMemory(device, vertexBufferMemory, nullptr);
+
+    vkDestroyBuffer(device, indexBuffer, nullptr);
+    vkFreeMemory(device, indexBufferMemory, nullptr);
 
     vkDestroyPipeline(device, graphicsPipeline, nullptr);
     vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
@@ -1330,7 +1358,21 @@ finalColor = finalColor & colorWriteMask;
     // used to bind vertex buffers to bindings (in shader code(?))
     vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
 
-    vkCmdDraw(commandBuffer, static_cast<uint32_t>(vertices.size()), 1, 0, 0);
+    // difference between binding index and vertex buffer: you can only have a single index buffer.
+    // its not possible to use different indices for each vertex attribute, so you have to completely duplicate
+    // vertex data even if just one attributes varies
+    //
+    // two types that are possible: UINT16, UINT32
+    vkCmdBindIndexBuffer(commandBuffer, indexBuffer, 0, VK_INDEX_TYPE_UINT16);
+
+    // the old draw command that did not use index buffer
+    //vkCmdDraw(commandBuffer, static_cast<uint32_t>(vertices.size()), 1, 0, 0);
+
+    vkCmdDrawIndexed(
+        commandBuffer,
+        (uint32_t) indices.size(),
+        1, 0, 0, 0
+    );
 
     vkCmdEndRenderPass(commandBuffer);
 
@@ -1528,6 +1570,41 @@ finalColor = finalColor & colorWriteMask;
     vkFreeMemory(device, stagingBufferMemory, nullptr);
   }
 
+  // almost identical to createVertexBuffer
+  // two notable differences:
+  // bufferSize is now equal to number of indices * size of index type
+  // indexBuffer should be USAGE_INDEX_BUFFER_BIT
+  void createIndexBuffer() {
+    VkDeviceSize bufferSize = sizeof(indices[0]) * indices.size();
+
+    VkBuffer stagingBuffer;
+    VkDeviceMemory stagingBufferMemory;
+    createBuffer(
+        bufferSize,
+        VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+        stagingBuffer, stagingBufferMemory
+    );
+
+    void* data;
+    vkMapMemory(device, stagingBufferMemory, 0, bufferSize, 0, &data);
+    memcpy(data, indices.data(), (size_t) bufferSize);
+    vkUnmapMemory(device, stagingBufferMemory);
+
+    createBuffer(
+        bufferSize,
+        VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+        indexBuffer,
+        indexBufferMemory
+    );
+
+    copyBuffer(stagingBuffer, indexBuffer, bufferSize);
+
+    vkDestroyBuffer(device, stagingBuffer, nullptr);
+    vkFreeMemory(device, stagingBufferMemory, nullptr);
+  }
+
   void copyBuffer(VkBuffer src, VkBuffer dst, VkDeviceSize size) {
     VkCommandBufferAllocateInfo allocInfo{};
     allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
@@ -1669,6 +1746,9 @@ private: // members
 
   VkBuffer vertexBuffer;
   VkDeviceMemory vertexBufferMemory;
+
+  VkBuffer indexBuffer;
+  VkDeviceMemory indexBufferMemory;
 
   std::vector<VkSemaphore> imageAvailableSemaphores;
   std::vector<VkSemaphore> renderFinishedSemaphores;
