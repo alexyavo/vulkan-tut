@@ -6,5 +6,8 @@
     "name" : "fmt",
     "version>=" : "10.1.1",
     "$comment" : "    find_package(fmt CONFIG REQUIRED)\n\n    target_link_libraries(main PRIVATE fmt::fmt)\n"
+  }, {
+    "name" : "stb",
+    "version>=" : "2023-04-11#1"
   } ]
 }

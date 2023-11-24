@@ -1,9 +1,13 @@
 #version 450
 
-// input passed on from vertex shader
-layout(location = 0) in vec3 fragColor;
+// TODO(vulkan) location here is what? 0? 1?
+layout(binding = 1) uniform sampler2D in_texSampler;
 
-layout(location = 0) out vec4 outColor;
+// input passed on from vertex shader
+layout(location = 0) in vec3 in_fragColor;
+layout(location = 1) in vec2 in_fragTexCoord;
+
+layout(location = 0) out vec4 out_color;
 
 
 // main is called for every fragment
@@ -16,5 +20,13 @@ void main() {
     // color with red all vertices
     // outColor = vec4(1.0, 0.0, 0.0, 1.0);
 
-    outColor = vec4(fragColor, 1.0);
+//    out_color = vec4(in_fragColor, 1.0);
+
+    // visualizing data using colors is the shader programming equivalent of priontf debugging, for lack
+    // of a better option
+//    out_color = vec4(in_fragTexCoord, 0.0, 1.0);
+
+    // texture is a built-in function
+    // takes care of filtering and transformations in the background
+    out_color = texture(in_texSampler, in_fragTexCoord * 1.0);
 }

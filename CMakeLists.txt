@@ -8,6 +8,7 @@ find_package(fmt CONFIG REQUIRED)
 
 file(GLOB SPV_SHADERS "shaders/*.spv")
 file(COPY ${SPV_SHADERS} DESTINATION "${CMAKE_BINARY_DIR}/shaders")
+file(COPY "textures" DESTINATION ${CMAKE_BINARY_DIR})
 
 add_executable(
         vulkan_tut
