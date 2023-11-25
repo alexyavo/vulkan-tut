@@ -5,10 +5,12 @@ set(CMAKE_CXX_STANDARD 23)
 
 find_package(Vulkan REQUIRED)
 find_package(fmt CONFIG REQUIRED)
+find_package(tinyobjloader REQUIRED)
 
 file(GLOB SPV_SHADERS "shaders/*.spv")
 file(COPY ${SPV_SHADERS} DESTINATION "${CMAKE_BINARY_DIR}/shaders")
 file(COPY "textures" DESTINATION ${CMAKE_BINARY_DIR})
+file(COPY "models" DESTINATION ${CMAKE_BINARY_DIR})
 
 add_executable(
         vulkan_tut

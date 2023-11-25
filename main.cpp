@@ -2,6 +2,7 @@
 
 #include <GLFW/glfw3.h>
 
+#include <unordered_map>
 #include <iostream>
 #include <vector>
 #include <stdexcept>
@@ -19,16 +20,20 @@
 #define GLM_FORCE_RADIANS
 #define GLM_FORCE_DEFAULT_ALIGNED_GENTYPES
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
+#define GLM_ENABLE_EXPERIMENTAL
 
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtx/hash.hpp>
 
 // wasn't able to get stb lib with vcpkg (although its still present in vcpkg.json manifest)
 // so installed the apt package instead:
 // sudo apt install libstb-dev
 #define STB_IMAGE_IMPLEMENTATION
-
 #include <stb/stb_image.h>
+
+#define TINYOBJLOADER_IMPLEMENTATION
+#include <tiny_obj_loader.h>
 
 // being explicit about alignment requirements
 struct UniformBufferObject {
@@ -37,10 +42,22 @@ struct UniformBufferObject {
   alignas(16) glm::mat4 proj;
 };
 
+// hash function for Vertex (for unordered_map)
+// implemented by specifying template speicalization for std::hash<T>
+
+
 struct Vertex {
   glm::vec3 pos;
   glm::vec3 color;
   glm::vec2 texCoord;
+
+  // needed for unordered_map
+  bool operator==(const Vertex& other) const {
+    return pos == other.pos &&
+           color == other.color &&
+           texCoord == other.texCoord;
+
+  }
 
   // why the following static methods are needed:
   // we need to tell vulkan how to pass vertex data format to the vertex shader
@@ -78,6 +95,15 @@ struct Vertex {
   }
 };
 
+namespace std {
+  template<> struct hash<Vertex> {
+    size_t operator()(Vertex const& vertex) const {
+      return ((hash<glm::vec3>()(vertex.pos) ^
+               (hash<glm::vec3>()(vertex.color) << 1)) >> 1) ^
+             (hash<glm::vec2>()(vertex.texCoord) << 1);
+    }
+  };
+}
 
 std::vector<char> readf(const std::string &filename) {
   std::ifstream f(
@@ -175,62 +201,11 @@ void DestroyDebugUtilsMessengerEXT(
 
 class HelloTriangleApplication {
 public:
-
-  // TODO these no longer work after using 3D coords for vertex position
-//  const std::vector<Vertex> color_triangle = {
-//      {{0.0f,  -0.5f}, {1.0f, 0.0f, 0.0f}},
-//      {{0.5f,  0.5f},  {0.0f, 1.0f, 0.0f}},
-//      {{-0.5f, 0.5f},  {0.0f, 0.0f, 1.0f}}
-//  };
-//
-//  const std::vector<Vertex> bluewhite_triangle = {
-//      {{0.0f,  -0.5f}, {1.0f, 1.0f, 1.0f}},
-//      {{0.5f,  0.5f},  {0.0f, 1.0f, 0.0f}},
-//      {{-0.5f, 0.5f},  {0.0f, 0.0f, 1.0f}}
-//  };
-//
-//  const std::vector<Vertex> rectangle = {
-//      {{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}},
-//      {{0.5f,  -0.5f}, {0.0f, 1.0f, 0.0f}},
-//      {{0.5f,  0.5f},  {0.0f, 0.0f, 1.0f}},
-//      {{-0.5f, 0.5f},  {1.0f, 1.0f, 1.0f}}
-//  };
-//
-  const std::vector<Vertex> texture_vertices = {
-      {{-0.5f, -0.5f, 0.0f}, {1.0f, 0.0f, 0.0f}, {0.0f, 0.0f}},
-      {{0.5f, -0.5f, 0.0f}, {0.0f, 1.0f, 0.0f}, {1.0f, 0.0f}},
-      {{0.5f, 0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f}},
-      {{-0.5f, 0.5f, 0.0f}, {1.0f, 1.0f, 1.0f}, {0.0f, 1.0f}},
-
-      {{-0.5f, -0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {0.0f, 0.0f}},
-      {{0.5f, -0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {1.0f, 0.0f}},
-      {{0.5f, 0.5f, -0.5f}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f}},
-      {{-0.5f, 0.5f, -0.5f}, {1.0f, 1.0f, 1.0f}, {0.0f, 1.0f}}
-  };
-
-
-  // not sure if the simple shapes still work after the modifications for the texture?
-  const std::vector<Vertex> vertices = texture_vertices;
-
-  // 0 = topleft, 1 = topright, 2 = bottomright, 3 = bottomleft
-  // topleft, topright, bottomright,
-  // bottomright, bottomleft, topleft
-  //
-  // can use uint32_t or uint16_t
-  // since we're using less than 65,535 unique vertices we stick to uint16_t
-  //
-  // reusing vertcies with index buffers allow to save memory which becomes important
-  // when you're loading complex 3D models.
-  //
-  // in the case of the rectangle, you have two triangles, where you can see that two
-  // vertices are duplicated
-  const std::vector<uint16_t> indices = {
-      0, 1, 2, 2, 3, 0,
-      4, 5, 6, 6, 7, 4
-  };
-
   const uint32_t WIDTH = 800;
   const uint32_t HEIGHT = 600;
+
+  const std::string MODEL_PATH =  "models/viking_room.obj";
+  const std::string TEXTURE_PATH =  "textures/viking_room.png";
 
   // each frame should have its own command buffer, set of semaphores and fence.
   const uint32_t MAX_FRAMES_IN_FLIGHT = 2;
@@ -291,6 +266,7 @@ private:
     createTextureImage();
     createTextureImageView();
     createTextureSampler();
+    loadModel();
     createVertexBuffer();
     createIndexBuffer();
     createUniformBuffers();
@@ -1452,7 +1428,7 @@ finalColor = finalColor & colorWriteMask;
     // vertex data even if just one attributes varies
     //
     // two types that are possible: UINT16, UINT32
-    vkCmdBindIndexBuffer(commandBuffer, indexBuffer, 0, VK_INDEX_TYPE_UINT16);
+    vkCmdBindIndexBuffer(commandBuffer, indexBuffer, 0, VK_INDEX_TYPE_UINT32);
 
     // the old draw command that did not use index buffer
     //vkCmdDraw(commandBuffer, static_cast<uint32_t>(vertices.size()), 1, 0, 0);
@@ -2044,7 +2020,7 @@ finalColor = finalColor & colorWriteMask;
     // std::byte models a mere collection of bits, supporting only bitwise and comparison operations
     // https://en.cppreference.com/w/cpp/types/byte
     stbi_uc *pixels = stbi_load(
-        "textures/texture.jpg",
+        TEXTURE_PATH.c_str(),
         &texWidth,
         &texHeight,
         &texChannels,
@@ -2053,7 +2029,7 @@ finalColor = finalColor & colorWriteMask;
     VkDeviceSize imageSize = texWidth * texHeight * 4;
 
     if (!pixels) {
-      throw std::runtime_error("failed to load texture image!");
+      throw std::runtime_error(fmt::format("failed to load texture image: {}", stbi_failure_reason()));
     }
 
     // create buffer in host visible memory so we can use vkMapMemory and copy
@@ -2474,6 +2450,76 @@ finalColor = finalColor & colorWriteMask;
 
   }
 
+  void loadModel() {
+    tinyobj::attrib_t attrib;
+    std::vector<tinyobj::shape_t> shapes;
+    std::vector<tinyobj::material_t> materials;
+    std::string warn, err;
+
+    // object file consists of positions, normals, texture coords, and faces
+    // faces consist of arbitrary amount of vertices, where each vertex refers to a position
+    // normal and/or texture coordinate by index
+    //
+    // attrib holds all of the positions normals and texture coords in
+    // attrib.vertices
+    // attrib.texcoords
+    // attrib.normals
+    //
+    // shapes contains all separate objects and their faces
+    // each face is an array of vertices
+    // each vertex contaions indices of the position, normal, and texture coord attributes
+    // (obj can also define a material and texture per face but we ignore this)
+    bool ok = tinyobj::LoadObj(
+        &attrib,
+        &shapes,
+        &materials,
+        &warn,
+        &err,
+        MODEL_PATH.c_str()
+    );
+
+    if (!ok) {
+      throw std::runtime_error(warn + err);
+    }
+
+    std::unordered_map<Vertex, uint32_t> uniqueVertices{};
+
+    // combine alll faces into a single model
+    for (const auto & shape: shapes) {
+      for (const auto & index: shape.mesh.indices) {
+        Vertex vertex{};
+
+        // attrib.vertices is an array of float values instead of something like vec3, thus
+        // we need to multiply by 3
+        vertex.pos = {
+            attrib.vertices[3 * index.vertex_index + 0],
+            attrib.vertices[3 * index.vertex_index + 1],
+            attrib.vertices[3 * index.vertex_index + 2]
+        };
+
+        vertex.texCoord = {
+            attrib.texcoords[2 * index.texcoord_index + 0],
+
+            // obj format assumes vertical coord of 0 means bottom of the image
+            // while we use top to bottom orientation where 0 means top of image
+            // so we need to flip it
+            1.0f - attrib.texcoords[2 * index.texcoord_index + 1]
+        };
+
+        vertex.color = {1.0f, 1.0f, 1.0f};
+
+        // reduces indices from 1,500,00 to 265,645 which saves a lot of GPU memory
+        if (uniqueVertices.count(vertex) == 0) {
+          uniqueVertices[vertex] = static_cast<uint32_t>(vertices.size());
+          vertices.push_back(vertex);
+        }
+
+        vertices.push_back(vertex);
+        indices.push_back(uniqueVertices[vertex]);  // assume every vertex is unique
+      }
+    }
+  }
+
 private: // members
   GLFWwindow *window;
   VkInstance instance;
@@ -2521,6 +2567,8 @@ private: // members
   VkCommandPool commandPool;
   std::vector<VkCommandBuffer> commandBuffers;
 
+  std::vector<Vertex> vertices;
+  std::vector<uint32_t> indices;
   VkBuffer vertexBuffer;
   VkDeviceMemory vertexBufferMemory;
 
