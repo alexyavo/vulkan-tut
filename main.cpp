@@ -231,6 +231,9 @@ public:
   const bool enableValidationLayers = true;
 #endif
 
+  // default: one sample per pixel, which is equivalent to no multisampling
+  VkSampleCountFlagBits msaaSamples = VK_SAMPLE_COUNT_1_BIT;
+
 public:
   void run() {
     initWindow();
@@ -264,6 +267,7 @@ private:
     createDescriptorSetLayout();
     createGraphicsPipeline();
     createCommandPool();
+    createColorResources();
     createDepthResources();
     createFramebuffers(); // must be after createDepthResources
     createTextureImage();
@@ -599,6 +603,7 @@ private:
           checkDeviceExtensionSupport(device) &&
           swapChainAdequate) {
         physicalDevice = device;
+        msaaSamples = getMaxUsableSampleCount();
         break;
       }
     }
@@ -633,6 +638,7 @@ private:
     // TODO(cpp): difference between "x;", "x{};", "x = {};" ?
     VkPhysicalDeviceFeatures deviceFeatures{};
     deviceFeatures.samplerAnisotropy = VK_TRUE;  // enable anisotropy, physical device must support this
+    deviceFeatures.sampleRateShading = VK_TRUE; // enable sample shading feature
     createInfo.pEnabledFeatures = &deviceFeatures;
 
     createInfo.queueCreateInfoCount = static_cast<uint32_t>(queueCreateInfos.size());
@@ -1069,9 +1075,9 @@ private:
     // one of the ways to perform anti-aliasing
     VkPipelineMultisampleStateCreateInfo multisampling{};
     multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
-    multisampling.sampleShadingEnable = VK_FALSE;
-    multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
-    multisampling.minSampleShading = 1.0f; // Optional
+    multisampling.sampleShadingEnable = VK_TRUE; // enable sample shading
+    multisampling.rasterizationSamples = msaaSamples;
+    multisampling.minSampleShading = 0.2f; // min fraction for sample shading: closer to 1 == smoother
     multisampling.pSampleMask = nullptr; // Optional
     multisampling.alphaToCoverageEnable = VK_FALSE; // Optional
     multisampling.alphaToOneEnable = VK_FALSE; // Optional
@@ -1198,7 +1204,7 @@ finalColor = finalColor & colorWriteMask;
     colorAttachment.format = swapChainImageFormat;
 
     // not doing anything with multi sampling yet
-    colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
+    colorAttachment.samples = msaaSamples;
 
     // loadOp and storeOp determine what to do with the data in the attachment before rendering
     // and after rendering
@@ -1225,7 +1231,7 @@ finalColor = finalColor & colorWriteMask;
     // UNDEFINED means we don't care
     // as for final, we want the image to be ready for presentation using the swap chain after rendering
     colorAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    colorAttachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    colorAttachment.finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 
     VkAttachmentReference colorAttachmentRef{};
     // we have a single attachment, described above
@@ -1234,7 +1240,7 @@ finalColor = finalColor & colorWriteMask;
 
     VkAttachmentDescription depthAttachment{};
     depthAttachment.format = findDepthFormat();
-    depthAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
+    depthAttachment.samples = msaaSamples;
     depthAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
     depthAttachment.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
     depthAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
@@ -1245,6 +1251,20 @@ finalColor = finalColor & colorWriteMask;
     VkAttachmentReference depthAttachmentRef{};
     depthAttachmentRef.attachment = 1;
     depthAttachmentRef.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
+    VkAttachmentDescription colorAttachmentResolve{};
+    colorAttachmentResolve.format = swapChainImageFormat;
+    colorAttachmentResolve.samples = VK_SAMPLE_COUNT_1_BIT;
+    colorAttachmentResolve.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    colorAttachmentResolve.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    colorAttachmentResolve.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    colorAttachmentResolve.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    colorAttachmentResolve.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    colorAttachmentResolve.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+
+    VkAttachmentReference colorAttachmentResolveRef{};
+    colorAttachmentResolveRef.attachment = 2;
+    colorAttachmentResolveRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 
     VkSubpassDescription subpass{};
 
@@ -1257,11 +1277,13 @@ finalColor = finalColor & colorWriteMask;
     // line
     subpass.colorAttachmentCount = 1;
     subpass.pColorAttachments = &colorAttachmentRef;
+    subpass.pResolveAttachments = &colorAttachmentResolveRef;
     subpass.pDepthStencilAttachment = &depthAttachmentRef;
 
-    std::array<VkAttachmentDescription, 2> attachments = {
+    std::array<VkAttachmentDescription, 3> attachments = {
         colorAttachment,
-        depthAttachment
+        depthAttachment,
+        colorAttachmentResolve
     };
 
     // read here: https://vulkan-tutorial.com/en/Drawing_a_triangle/Drawing/Rendering_and_presentation
@@ -1319,9 +1341,10 @@ finalColor = finalColor & colorWriteMask;
     swapChainFramebuffers.resize(swapChainImageViews.size());
 
     for (size_t i = 0; i < swapChainImageViews.size(); ++i) {
-      std::array<VkImageView, 2> attachments = {
+      std::array<VkImageView, 3> attachments = {
+          colorImageView,
+          depthImageView,
           swapChainImageViews[i],
-          depthImageView
       };
 
       VkFramebufferCreateInfo framebufferInfo = {};
@@ -1641,6 +1664,8 @@ finalColor = finalColor & colorWriteMask;
     // image views based directly on the swap chain imagesjA
     createImageViews();
 
+    createColorResources();
+
     createDepthResources();
 
     // depend directly on the swap chain images
@@ -1653,6 +1678,10 @@ finalColor = finalColor & colorWriteMask;
   }
 
   void cleanupSwapchain() {
+    vkDestroyImageView(device, colorImageView, nullptr);
+    vkDestroyImage(device, colorImage, nullptr);
+    vkFreeMemory(device, colorImageMemory, nullptr);
+
     vkDestroyImageView(device, depthImageView, nullptr);
     vkDestroyImage(device, depthImage, nullptr);
     vkFreeMemory(device, depthImageMemory, nullptr);
@@ -1965,6 +1994,7 @@ finalColor = finalColor & colorWriteMask;
       uint32_t width,
       uint32_t height,
       uint32_t mipLevels,
+      VkSampleCountFlagBits numSamples,
       VkFormat format,
       VkImageTiling tiling,
       VkImageUsageFlags usage,
@@ -1989,7 +2019,7 @@ finalColor = finalColor & colorWriteMask;
     imageInfo.tiling = tiling;
     imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     imageInfo.usage = usage;
-    imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+    imageInfo.samples = numSamples;
     imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
     if (vkCreateImage(device, &imageInfo, nullptr, &out_image) != VK_SUCCESS) {
@@ -2067,6 +2097,7 @@ finalColor = finalColor & colorWriteMask;
         texWidth,
         texHeight,
         mipLevels,
+        VK_SAMPLE_COUNT_1_BIT,
         VK_FORMAT_R8G8B8A8_SRGB,
         VK_IMAGE_TILING_OPTIMAL,
 
@@ -2453,6 +2484,7 @@ finalColor = finalColor & colorWriteMask;
         swapChainExtent.width,
         swapChainExtent.height,
         1,
+        msaaSamples,
         depthFormat,
         VK_IMAGE_TILING_OPTIMAL,
         VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
@@ -2669,6 +2701,30 @@ finalColor = finalColor & colorWriteMask;
     endSingleTimeCommands(commandBuffer);
   }
 
+  VkSampleCountFlagBits getMaxUsableSampleCount() {
+    VkPhysicalDeviceProperties physicalDeviceProperties;
+    vkGetPhysicalDeviceProperties(physicalDevice, &physicalDeviceProperties);
+
+    VkSampleCountFlags counts =
+        physicalDeviceProperties.limits.framebufferColorSampleCounts &
+        physicalDeviceProperties.limits.framebufferDepthSampleCounts;
+    if (counts & VK_SAMPLE_COUNT_64_BIT) { return VK_SAMPLE_COUNT_64_BIT; }
+    if (counts & VK_SAMPLE_COUNT_32_BIT) { return VK_SAMPLE_COUNT_32_BIT; }
+    if (counts & VK_SAMPLE_COUNT_16_BIT) { return VK_SAMPLE_COUNT_16_BIT; }
+    if (counts & VK_SAMPLE_COUNT_8_BIT) { return VK_SAMPLE_COUNT_8_BIT; }
+    if (counts & VK_SAMPLE_COUNT_4_BIT) { return VK_SAMPLE_COUNT_4_BIT; }
+    if (counts & VK_SAMPLE_COUNT_2_BIT) { return VK_SAMPLE_COUNT_2_BIT; }
+
+    return VK_SAMPLE_COUNT_1_BIT;
+  }
+
+  void createColorResources() {
+    VkFormat colorFormat = swapChainImageFormat;
+
+    createImage(swapChainExtent.width, swapChainExtent.height, 1, msaaSamples, colorFormat, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, colorImage, colorImageMemory);
+    colorImageView = createImageView(colorImage, colorFormat, VK_IMAGE_ASPECT_COLOR_BIT, 1);
+  }
+
 private: // members
   GLFWwindow *window;
   VkInstance instance;
@@ -2762,6 +2818,12 @@ private: // members
   VkImage depthImage;
   VkDeviceMemory depthImageMemory;
   VkImageView depthImageView;
+
+  // msaa
+  // image will store the desired number of samples per pixel
+  VkImage colorImage;
+  VkDeviceMemory colorImageMemory;
+  VkImageView colorImageView;
 };
 
 int main() {
