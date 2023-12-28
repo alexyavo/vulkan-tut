@@ -6,6 +6,7 @@ set(CMAKE_CXX_STANDARD 23)
 find_package(Vulkan REQUIRED)
 find_package(fmt CONFIG REQUIRED)
 find_package(tinyobjloader REQUIRED)
+find_package(glfw3 CONFIG REQUIRED)
 
 file(GLOB SPV_SHADERS "shaders/*.spv")
 file(COPY ${SPV_SHADERS} DESTINATION "${CMAKE_BINARY_DIR}/shaders")

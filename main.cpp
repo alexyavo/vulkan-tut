@@ -12,6 +12,8 @@
 #include <limits>
 #include <fstream>
 #include <chrono>
+#include <array>
+#include <algorithm>
 
 #include <fmt/core.h>
 
@@ -31,7 +33,7 @@
 // sudo apt install libstb-dev
 #define STB_IMAGE_IMPLEMENTATION
 
-#include <stb/stb_image.h>
+#include <stb_image.h>
 
 #define TINYOBJLOADER_IMPLEMENTATION
 
@@ -45,7 +47,7 @@ struct UniformBufferObject {
 };
 
 // hash function for Vertex (for unordered_map)
-// implemented by specifying template speicalization for std::hash<T>
+// implemented by specifying template specialization for std::hash<T>
 
 
 struct Vertex {
@@ -246,7 +248,7 @@ private:
   void initWindow() {
     glfwInit();
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);  // don't create OpenGL context
-    glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);  // disable window resizing
+    glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
 
     // last parameter relevant only for OpenGL
     // monitor param controls which monitor the window will be created on
