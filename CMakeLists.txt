@@ -17,6 +17,7 @@ add_executable(
         vulkan_tut
         testenvsetup.cpp
         main.cpp
+        common.h
 )
 
 target_link_libraries(vulkan_tut glfw ${GLFW_LIBRARIES} Vulkan::Vulkan fmt::fmt)
