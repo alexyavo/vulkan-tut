@@ -2909,7 +2909,7 @@ void init_spdlog() {
   vk_debug_messenger->set_level(spdlog::level::debug);
 
   auto vk_debug_sink = (spdlog::sinks::stdout_color_sink_mt *)(vk_debug_messenger->sinks().back().get());
-  vk_debug_sink->set_color(spdlog::level::debug, 12);
+  vk_debug_sink->set_color(spdlog::level::debug, "\033[37m");
 }
 
 std::string hexdump(void *ptr, int buflen) {
@@ -3206,6 +3206,8 @@ public:
     VK_CHECK(vkCreateDevice(pdevice, &info, nullptr, &device_));
   }
 
+  operator VkDevice() { return device_; }
+
   VkQueue q() {
     VkQueue q;
     vkGetDeviceQueue(device_, qf_.index(), 0, &q);
@@ -3246,17 +3248,98 @@ const char* string_VkColorSpaceKHR(VkColorSpaceKHR colorSpace) {
   }
 }
 
-}
+class ImageView {
+  VkDevice device_;
+  VkImageView view_;
+
+public:
+  ImageView(const VkImageViewCreateInfo& info, LDevice& device) : device_(device) {
+    spdlog::debug("creating image view");
+    VK_CHECK(vkCreateImageView(device_, &info, nullptr, &view_));
+  }
+
+  ~ImageView() {
+    vkDestroyImageView(device_, view_, nullptr);
+  }
+};
+
+class Swapchain {
+  VkDevice device_;
+  VkSwapchainKHR swapChain_;
+
+public:
+  Swapchain(const VkSwapchainCreateInfoKHR& info, LDevice& device) : device_(device) {
+    spdlog::debug("creating swapchain");
+    VK_CHECK(vkCreateSwapchainKHR(device, &info, nullptr, &swapChain_));
+  }
+
+  vec<VkImage> images() {
+    u32 num_images;
+    VK_CHECK(vkGetSwapchainImagesKHR(device_, swapChain_, &num_images, nullptr));
+
+    vec<VkImage> images(num_images);
+    VK_CHECK(vkGetSwapchainImagesKHR(device_, swapChain_, &num_images, images.data()));
+
+    return images;
+  }
+
+  // vec<ptr<ImageView>> image_views() {
+  //   auto images = this->images();
+  //   vec<ptr<ImageView>> views;
+
+  //   for (auto image: images) {
+  //     ptr(new ImageView(VkImageViewCreateInfo {
+  //       .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+  //       .image = image,
+  //       .viewType = VK_IMAGE_VIEW_TYPE_2D,
+  //       .format = VK_FORMAT_B8G8R8A8_SRGB,
+  //       .components.r = VK_COMPONENT_SWIZZLE_IDENTITY,
+  //       .components.g = VK_COMPONENT_SWIZZLE_IDENTITY,
+  //       .components.b = VK_COMPONENT_SWIZZLE_IDENTITY,
+  //       .components.a = VK_COMPONENT_SWIZZLE_IDENTITY,
+  //       .subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+  //       .subresourceRange.baseMipLevel = 0,
+  //       .subresourceRange.levelCount = 1,
+  //       .subresourceRange.baseArrayLayer = 0,
+  //       .subresourceRange.layerCount = 1
+  //     }, device_));
+  //     VkImageViewCreateInfo info {};
+  //     info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+  //     info.image = image;
+  //     info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+  //     info.format = VK_FORMAT_B8G8R8A8_SRGB;
+  //     info.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
+  //     info.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
+  //     info.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
+  //     info.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
+  //     info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  //     info.subresourceRange.baseMipLevel = 0;
+  //     info.subresourceRange.levelCount = 1;
+  //     info.subresourceRange.baseArrayLayer = 0;
+  //     info.subresourceRange.layerCount = 1;
+
+  //     VkImageView image_view;
+  //     VK_CHECK(vkCreateImageView(device_, &info, nullptr, &image_view));
+  //     image_views.push_back(image_view);
+  //   }
+
+  //   return image_views;
+  // }
+
+  ~Swapchain() {
+    spdlog::debug("destroying swapchain");
+    vkDestroySwapchainKHR(device_, swapChain_, nullptr);
+  }
+
+};
+
+} // namespace vk
+
 
 int main() {
   init_spdlog();
 
   auto window = glfw::Window(800, 600, "Vulkan");
-
-  // Before using Vulkan, an application must initialize it by loading the Vulkan commands,
-  // and creating a VkInstance object.
-
-//  auto config = vk::Config {};
 
   spdlog::info("Vulkan version: {}", vk::ver());
 
@@ -3437,6 +3520,33 @@ int main() {
 
   spdlog::debug("swap extent = {}x{}", extent.width, extent.height);
 
+  auto swapchain = vk::Swapchain(
+      VkSwapchainCreateInfoKHR{
+          .sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
+          .pNext = nullptr,
+          .flags = 0,
+          .surface = surface,
+          .minImageCount = desired_image_count,
+          .imageFormat = desired_format.format,
+          .imageColorSpace = desired_format.colorSpace,
+          .imageExtent = extent,
+          .imageArrayLayers = 1,
+          .imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+
+          .imageSharingMode = VK_SHARING_MODE_EXCLUSIVE,
+          .queueFamilyIndexCount = 0,
+          .pQueueFamilyIndices = nullptr,
+
+          .preTransform = khr_capabilities.currentTransform,
+          .compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
+          .presentMode = desired_present_mode,
+          .clipped = VK_TRUE,
+          .oldSwapchain = VK_NULL_HANDLE
+      },
+      ldevice
+  );
+
+  auto swapchain_images = swapchain.images();
 
 //    VkInstanceCreateInfo createInfo{};
 //    vkCreateInstance(&createInfo, nullptr, nullptr);

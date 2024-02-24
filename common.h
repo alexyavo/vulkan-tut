@@ -9,6 +9,9 @@ template<typename T>
 using sptr = std::shared_ptr<T>;
 
 template<typename T>
+using ptr = std::unique_ptr<T>;
+
+template<typename T>
 using vec = std::vector<T>;
 
 using u32 = uint32_t;

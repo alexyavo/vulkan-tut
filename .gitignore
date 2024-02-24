@@ -1,5 +1,11 @@
 .idea/
+build/
 cmake-build-debug/
 
-**/*.spv
+.cache/
+.clangd
+compile_commands.json
+vcpkg_installed/
+.sublime*
 
+**/*.spv

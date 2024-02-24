@@ -1,10 +1,10 @@
 cmake_minimum_required(VERSION 2.26)
 project(vulkan_tut)
 
-set(CMAKE_CXX_STANDARD 23)
+set(CMAKE_CXX_STANDARD 20)
 
 find_package(Vulkan REQUIRED)
-find_package(fmt CONFIG REQUIRED)
+find_package(fmt REQUIRED)
 find_package(tinyobjloader REQUIRED)
 find_package(glfw3 CONFIG REQUIRED)
 
